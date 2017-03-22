@@ -38,6 +38,7 @@ void small_example(int *&hR,int *&hC, float *&hD, float *&hX, float *&hY, uint64
 }
 
 void small_test_coo(){
+	cudaDeviceReset();
 	cusparseHandle_t handle;
 	cusparseMatDescr_t descr=0;
 	int *hR,*hC; float *hD;
@@ -81,6 +82,7 @@ void small_test_coo(){
 	cutil::safeCopyToDevice<int,uint64_t>(dC,hC,sizeof(int)*nnz, "Error copying hC to dC");
 	cutil::safeCopyToDevice<float,uint64_t>(dD,hD,sizeof(float)*nnz, "Error copying hD to dD");
 	cutil::safeCopyToDevice<float,uint64_t>(dX,hX,sizeof(float)*vsize, "Error copying hX to dX");
+	cutil::safeCopyToDevice<float,uint64_t>(dY,hY,sizeof(float)*vsize, "Error copying hY to dY");
 
 	cpu_coo(hY,hX,hR,hC,hD,nnz,vsize);
 	print_vector<float>(hY,vsize,vsize);
