@@ -30,6 +30,7 @@ const static std::string TARG="-t";
 const static std::string DPT="-pt";//DATA PER THREAD// CUDA ONLY
 const static std::string BARG="-b";
 const static std::string IARG="-i";
+const static std::string FARG="-f";
 const static std::string F1ARG="-f1";
 const static std::string F2ARG="-f2";
 const static std::string INARG="-in";

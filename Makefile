@@ -14,11 +14,11 @@ INCLUDE_DIR=-I /home/vzois/git/openblas/ -L/home/vzois/git/openblas/ -lopenblas
 ARCH = -gencode arch=compute_35,code=sm_35
 CUDA_LIBS = -lcusparse_static -lculibos
 
-all: 
-	$(NVCC) -std=c++11 -O3 $(ARCH) $(CUDA_LIBS) spmv_test/main.cu -o $(GEXE)
+all:
+	$(CPUC) fio/main.cpp fio/mmio.c -o mm_main
 		
-spmv_test:
-	$(NVCC) -std=c++11 -O3 $(ARCH) spmv_test/main.cu -o $(GEXE)
+spmv_t:
+	$(NVCC) -std=c++11 -O3 $(ARCH) $(CUDA_LIBS) spmv_test/main.cu -o $(GEXE)
 	
 ptx:
 	$(NVCC) -std=c++11 $(ARCH) $(CUDA_LIBS) -ptx spmv_test/main.cu
@@ -40,4 +40,5 @@ clean:
 	rm -rf *.o
 	rm -rf *fatbin*
 	rm -rf *module_id
+	rm -rf mm_main
 	
