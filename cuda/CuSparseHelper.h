@@ -10,7 +10,7 @@
 
 namespace cusp_util{
 
-	void handle_error(cusparseStatus_t status, std::string msg){
+	void handle_error(cusparseStatus_t &status, std::string msg){
 
 		switch(status){
 			case CUSPARSE_STATUS_SUCCESS:
@@ -42,8 +42,6 @@ namespace cusp_util{
 		}
 
 	}
-
-
 }
 
 #endif
