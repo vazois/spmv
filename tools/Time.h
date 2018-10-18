@@ -14,7 +14,20 @@
 #include <iostream>
 #include<string>
 
-#include "Constants.h"
+#include<ratio>
+#include<climits>
+#include<chrono>
+#include<ctime>
+
+typedef std::pair<uint64_t, uint64_t> arr2D;
+
+typedef std::chrono::duration<double, std::ratio<1, 1000000000>> nanos;
+typedef std::chrono::duration<double, std::ratio<1,1000>> millis;
+typedef std::chrono::duration<double, std::ratio<1,1> > secs;
+typedef std::chrono::duration<double, std::ratio<60, 1> > mins;
+typedef std::chrono::duration<double, std::ratio<3600, 1> > hours;
+typedef std::chrono::duration<double, std::ratio<60 * 60 * 24, 1> > days;
+typedef std::chrono::duration<double, std::ratio<60 * 60 * 24 * 30, 1> > months;
 
 template<class M>
 class Time{
@@ -51,7 +64,7 @@ double Time<M>::lap(std::string comment){
 	M time_span = std::chrono::duration_cast<M>(this->tp2 - this->tp1);
 
 	double tt= time_span.count();
-	std::cout << "Elapsed Time ( " << comment << " ): " << tt << std::endl;
+	if(!comment.compare("")) std::cout << "Elapsed Time ( " << comment << " ): " << tt << std::endl;
 	this->tp1 = std::chrono::high_resolution_clock::now();
 
 	return tt;
@@ -103,9 +116,3 @@ static double get_cpu_time(){
 #endif
 
 #endif
-
-
-
-
-
-
