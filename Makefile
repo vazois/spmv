@@ -3,14 +3,10 @@ NVCC=/usr/local/cuda-9.0/bin/nvcc
 
 GEXE=gmain
 
-CBLAS_FLAGS = -lgsl -lcblas -l
-COPT_FLAGS= -O3 -ffast-math -funroll-loops -msse -mmmx -fomit-frame-pointer -m64
-INCLUDE_DIR=-I /home/vzois/git/openblas/ -L/home/vzois/git/openblas/ -lopenblas
-
 #NVCC_FLAGS = --ptxas-options=-v -gencode arch=compute_35,code=sm_35 -rdc=true
 ARCH = -gencode arch=compute_61,code=sm_61
 #ARCH = -gencode arch=compute_35,code=sm_35
-CUDA_LIBS = -lcusparse_static -lculibos
+CUDA_LIBS = -lcusparse_static -lculibos -lcublas_static
 
 all:
 	$(NVCC) -std=c++11 $(ARCH) $(CUDA_LIBS) main.cu -o $(GEXE)

@@ -3,6 +3,7 @@
 
 #include "../cuda/CudaHelper.h"
 #include "../cuda/CuSparseHelper.h"
+#include "../cuda/CuBLASHelper.h"
 
 struct idx_mx_mn
 {
@@ -69,11 +70,6 @@ void destroy_csr(csr_format<Z,T> &csr)
 	csr.col_idx = NULL;
 	csr.values = NULL;
 }
-
-
-static cusparseHandle_t cusparse_handle;
-static cusparseStatus_t cusparse_status;
-
 
 
 #endif

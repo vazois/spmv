@@ -11,7 +11,6 @@
 
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <cublas_v2.h>
 #include <curand_kernel.h>
 #include <iostream>
 #include <string>
@@ -33,7 +32,6 @@ namespace cutil{
 	 */
 	__host__ cudaError_t printDeviceSpecs(bool);
 	__host__ void cudaCheckErr(cudaError_t error, std::string comment);
-	__host__ void cublasCheckErr(cublasStatus_t status, std::string comment);
 
 	/*
 	 * Grid and Block dimension computation.
@@ -174,10 +172,6 @@ namespace cutil{
 	 */
 	__host__ void cudaCheckErr(cudaError_t error, std::string comment){
 		if (error != cudaSuccess){ std::cout << "Cuda Error: " << comment << "," << cudaGetErrorString(error) << std::endl; exit(1); }
-	}
-
-	__host__ void cublasCheckErr(cublasStatus_t status, std::string comment){
-		if ( status != CUBLAS_STATUS_SUCCESS ){ std::cout<<"Cublas Error: "<< comment << std::endl; }
 	}
 
 	__host__ void setActiveDevice(int devID){

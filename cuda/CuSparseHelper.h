@@ -1,12 +1,14 @@
 #ifndef CU_SPARSE_HELPER_H
 #define CU_SPARSE_HELPER_H
 
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#include <cusparse_v2.h>
-
+#include "../cuda/CudaHelper.h"
 #include <iostream>
 #include <string>
+#include <cusparse_v2.h>
+
+static cusparseHandle_t cusparse_handle;
+static cusparseStatus_t cusparse_status;
+static cusparseMatDescr_t cusparse_descrA;
 
 namespace cusp_util{
 

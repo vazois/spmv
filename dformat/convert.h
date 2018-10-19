@@ -39,8 +39,6 @@ void edges_to_csr(csr_format<Z,T> &csr, std::vector<edge> &edges)
 {
 	csr.nnz = edges.size();
 	csr.m = 0;
-	//cutil::safeMalloc<Z,uint64_t>(&(csr.col_idx),sizeof(Z)*csr.nnz,"csr col_idx alloc");
-	//cutil::safeMalloc<T,uint64_t>(&(csr.values),sizeof(T)*csr.nnz,"scr values alloc");
 
 	Z *row_idx = (Z*)malloc(sizeof(Z)*csr.nnz);
 	Z *col_idx = (Z*)malloc(sizeof(Z)*csr.nnz);
@@ -48,13 +46,12 @@ void edges_to_csr(csr_format<Z,T> &csr, std::vector<edge> &edges)
 	uint64_t count = 0;
 	uint64_t j = 1;
 
+	std::cout << "Creating csr ... " << std::endl;
 	row_idx[0] = 0;
 	for(uint64_t i = 0; i < csr.nnz; i++)
 	{
-
 		col_idx[i] = edges[i].second - idx_bounds.mn;
 		values[i] = 0.5;
-
 		if(i > 0 & (edges[i].first != edges[i-1].first))
 		{
 			csr.m++;
@@ -64,18 +61,28 @@ void edges_to_csr(csr_format<Z,T> &csr, std::vector<edge> &edges)
 		count++;
 	}
 	row_idx[csr.m] = count;
-	//cutil::safeMalloc<Z,uint64_t>(&(csr.row_idx),sizeof(Z)*csr.m,"csr row_idx alloc");
 
-	for(uint64_t i = 1; i < 2;i++)
-	{
-		//std::cout << "i: " <<row_idx[i] << std::endl;
-		std::cout << "size: " << row_idx[i] - row_idx[i-1] << std::endl;
-		for(uint64_t j = row_idx[i-1]; j < row_idx[i]; j++)
-		{
-			std::cout << "\t" << edges[j].first << "---" << edges[j].second << std::endl;
-		}
-	}
-	std::cout << "csr.m: " << csr.m << std::endl;
+//	for(uint64_t i = 1; i < 2;i++)
+//	{
+//		//std::cout << "i: " <<row_idx[i] << std::endl;
+//		std::cout << "size: " << row_idx[i] - row_idx[i-1] << std::endl;
+//		uint32_t count = 0;
+//		for(uint64_t j = row_idx[i-1]; j < row_idx[i]; j++)
+//		{
+//			std::cout << "\t " << count << ": " << edges[j].first << "---" << edges[j].second << std::endl;
+//			count++;
+//		}
+//	}
+//	std::cout << "csr.m: " << csr.m << std::endl;
+
+	std::cout << "Copying data to GPU ..." << std::endl;
+	cutil::safeMalloc<Z,uint64_t>(&(csr.row_idx),sizeof(Z)*(csr.m+1),"csr row_idx alloc");
+	cutil::safeMalloc<Z,uint64_t>(&(csr.col_idx),sizeof(Z)*csr.nnz,"csr col_idx alloc");
+	cutil::safeMalloc<T,uint64_t>(&(csr.values),sizeof(T)*csr.nnz,"scr values alloc");
+
+	cutil::safeCopyToDevice<Z,uint64_t>(csr.row_idx, row_idx,sizeof(Z)*(csr.m+1), "csr copy to csr.row_idx");
+	cutil::safeCopyToDevice<Z,uint64_t>(csr.col_idx, col_idx,sizeof(Z)*csr.nnz, "csr copy to csr.col_idx");
+	cutil::safeCopyToDevice<T,uint64_t>(csr.values, values,sizeof(T)*csr.nnz, "csr copy to csr.values");
 
 	free(row_idx);
 	free(col_idx);
