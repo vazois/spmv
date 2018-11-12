@@ -7,21 +7,22 @@
 
 struct idx_mx_mn
 {
-	uint64_t mx;
-	uint64_t mn;
+	uint32_t mx;
+	uint32_t mn;
 };
 static idx_mx_mn idx_bounds;
 
 struct edge{
-	uint64_t first;
-	uint64_t second;
+	uint32_t first;
+	uint32_t second;
 };
 static std::vector<edge> edges;
 
 template<class Z, class T>
 struct coo_format
 {
-	Z nnz;
+	Z nnz;//nonzeros
+	Z m;//nodes
 
 	Z *row_idx = NULL;
 	Z *col_idx = NULL;
@@ -31,8 +32,8 @@ struct coo_format
 template<class Z,class T>
 struct csr_format
 {
-	Z nnz;
-	Z m;
+	Z nnz;//nonzeros
+	Z m;//nodes
 
 	Z *row_idx = NULL;
 	Z *col_idx = NULL;

@@ -24,6 +24,7 @@ uint64_t count_lines(std::string fname)
 	return count;
 }
 
+
 void load_tsv(std::string fname)
 {
 	FILE *fp = fopen(fname.c_str(), "r");
@@ -37,13 +38,13 @@ void load_tsv(std::string fname)
 	rewind(fp);
 
 
-	uint64_t n[2] = {0,0};
-	uint64_t mx[2] = {0,0};
-	uint64_t mn[2] = {ULONG_MAX,ULONG_MAX};
+	uint32_t n[2] = {0,0};
+	uint32_t mx[2] = {0,0};
+	uint32_t mn[2] = {UINT_MAX,UINT_MAX};
 	std::cout << "Loading edges from " << fname << " !!!" <<std::endl;
 	std::cout << "Loading: [" << (uint32_t)((((double)bytes_read)/(bytes_total))*100) << "]\r";
 	std::cout.flush();
-	while(fscanf(fp,"%ld\t%ld",&n[0],&n[1]) > 0)
+	while(fscanf(fp,"%u\t%u",&n[0],&n[1]) > 0)
 	{
 		//std::cout << n[0] << "-->" << n[1] << std::endl;
 		mx[0] = std::max(n[0],mx[0]); mx[1] = std::max(n[1],mx[1]);
@@ -58,19 +59,16 @@ void load_tsv(std::string fname)
 		uint32_t p = bytes_read / bytes_progress;
 		if( p > 0 )
 		{
-			std::cout << "Loading: [" << (uint32_t)((((double)bytes_read)/(bytes_total))*100) << "]\r";
+			//std::cout << "Loading: [" << (uint32_t)((((double)bytes_read)/(bytes_total))*100) << "] -- " << edges.size() <<" \r";
+			std::cout << "Loading: [" << (uint32_t)((((double)bytes_read)/(bytes_total))*100) << "] \r";
 			std::cout.flush();
 			bytes_progress += BYTES_FRAME;
 		}
 	};
 	std::cout.flush();
 	std::cout << "max: " << mx[0] << "," << mx[1] << std::endl;
-	std::cout << "min: " << mn[0] << "," << mn[1] << std::endl;
-	std::cout << "Sorting edges!!!" << std::endl;
-	std::sort(edges.begin(),edges.end(),sort_edge_asc);
-	//for(uint64_t i = 0; i < edges.size(); i++) std::cout << edges[i].first << "--->" << edges[i].second << std::endl;
 	idx_bounds.mx = std::max(mx[0],mx[1]);
-	idx_bounds.mn = std::max(mn[0],mn[1]);
+	idx_bounds.mn = std::min(mn[0],mn[1]);
 	fclose(fp);
 }
 

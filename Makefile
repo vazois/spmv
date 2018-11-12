@@ -1,15 +1,17 @@
 #NVCC=/usr/local/cuda-8.0/bin/nvcc
 NVCC=/usr/local/cuda-9.0/bin/nvcc
+NVCC_INCLUDE=-Icub-1.8.0/ -I/usr/local/cuda/include/
+NVCC_LIBS=-L/usr/local/cuda-9.0/lib64/
 
 GEXE=gmain
 
 #NVCC_FLAGS = --ptxas-options=-v -gencode arch=compute_35,code=sm_35 -rdc=true
-ARCH = -gencode arch=compute_61,code=sm_61
+#ARCH = -gencode arch=compute_61,code=sm_61
 #ARCH = -gencode arch=compute_35,code=sm_35
 CUDA_LIBS = -lcusparse_static -lculibos -lcublas_static
 
 all:
-	$(NVCC) -std=c++11 $(ARCH) $(CUDA_LIBS) main.cu -o $(GEXE)
+	$(NVCC) $(NVCC_LIBS) -std=c++11 $(CUDA_LIBS) main.cu -o $(GEXE) $(NVCC_INCLUDE)
 		
 ptx:
 	$(NVCC) -std=c++11 $(ARCH) $(CUDA_LIBS) -ptx main.cu

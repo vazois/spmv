@@ -41,6 +41,8 @@ namespace cusp_util{
 			case CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED:
 				std::cout<< "(ERROR) at {"<<msg<<"} Matrix type not supported!!!" << std::endl;
 				break;
+			default:
+				std::cout << "(ERROR)" << std::endl;
 		}
 
 	}
