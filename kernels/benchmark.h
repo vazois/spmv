@@ -25,6 +25,9 @@ static int formats[] = {
 		BSR
 };
 
+#define UNIFIED_MEMORY 0
+
+
 template<class Z, class T>
 class BenchSPMV{
 	public:
@@ -34,11 +37,18 @@ class BenchSPMV{
 		};
 
 		~BenchSPMV(){
+		#if UNIFIED_MEMORY
+			if(coo.row_idx != NULL) cudaFreeHost(coo.row_idx); if(coo.col_idx != NULL) cudaFreeHost(coo.col_idx); if(coo.values != NULL) cudaFreeHost(coo.values);
+			if(csr.row_idx != NULL) cudaFreeHost(csr.row_idx); if(csr.col_idx != NULL) cudaFreeHost(csr.col_idx); if(csr.values != NULL) cudaFreeHost(csr.values);
+		#else
 			if(coo.row_idx != NULL) free(coo.row_idx); if(coo.col_idx != NULL) free(coo.col_idx); if(coo.values != NULL) free(coo.values);
 			if(csr.row_idx != NULL) cudaFree(csr.row_idx); if(csr.col_idx != NULL) cudaFree(csr.col_idx); if(csr.values != NULL) cudaFree(csr.values);
+		#endif
+
 		};
 
 		void load_coo(std::string fname);
+		void coo_to_csr_old();
 		void coo_to_csr();
 
 		void power_method();
@@ -95,10 +105,15 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 	coo.nnz = edge_num;
 
 	std::cout << "Edges ... " << edge_num << std::endl;
+#if UNIFIED_MEMORY
+	cutil::safeMallocHost<Z,uint64_t>(&(coo.row_idx),sizeof(Z)*coo.nnz,"coo coo.row_idx alloc");//ROW IDX FOR COO
+	cutil::safeMallocHost<Z,uint64_t>(&(coo.col_idx),sizeof(Z)*coo.nnz,"coo coo.col_idx alloc");//ROW IDX FOR COO
+	cutil::safeMallocHost<T,uint64_t>(&(coo.values),sizeof(T)*coo.nnz,"coo coo.values alloc");//ROW IDX FOR COO
+#else
 	coo.row_idx = (Z*)malloc(sizeof(Z)*coo.nnz);//Allocate coo.row_idx
 	coo.col_idx = (Z*)malloc(sizeof(Z)*coo.nnz);//Allocate coo.col_idx
 	coo.values = (T*)malloc(sizeof(T)*coo.nnz);//Allocate coo.values
-
+#endif
 	//////////////////////////////////////////////////////
 	//Load//
 	FILE *fp = fopen(fname.c_str(), "r");
@@ -156,7 +171,7 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 }
 
 template<class Z, class T>
-void BenchSPMV<Z,T>::coo_to_csr()
+void BenchSPMV<Z,T>::coo_to_csr_old()
 {
 	//COO Data
 	std::cout << "Converting ... " << coo.m << std::endl;
@@ -184,6 +199,49 @@ void BenchSPMV<Z,T>::coo_to_csr()
 }
 
 template<class Z, class T>
+void BenchSPMV<Z,T>::coo_to_csr()
+{
+	//COO Data
+	std::cout << "Converting ... " << coo.m << std::endl;
+#if !UNIFIED_MEMORY
+	Z *coo_row_idx = NULL;
+	cutil::safeMalloc<Z,uint64_t>(&(coo_row_idx),sizeof(Z)*coo.nnz,"coo row_idx alloc");//ROW IDX FOR COO
+	cutil::safeCopyToDevice<Z,uint64_t>(coo_row_idx, coo.row_idx,sizeof(Z)*coo.nnz, "coo.row_idx copy to coo_row_idx");
+#endif
+
+	//CSR Data
+	csr.m = coo.m;
+	csr.nnz = coo.nnz;
+#if !UNIFIED_MEMORY
+	cutil::safeMalloc<Z,uint64_t>(&(csr.row_idx),sizeof(Z)*(csr.m+1),"csr row_idx alloc");//ROW IDX FOR CSR
+#else
+	cutil::safeMallocHost<Z,uint64_t>(&(csr.row_idx),sizeof(Z)*(csr.m+1),"csr row_idx alloc");//ROW IDX FOR CSR
+#endif
+
+	std::cout << "Converting data to csr ..." <<std::endl;
+#if !UNIFIED_MEMORY
+	cusparse_status = cusparseXcoo2csr(cusparse_handle, coo_row_idx, coo.nnz, coo.m, csr.row_idx, CUSPARSE_INDEX_BASE_ZERO);
+#else
+	cusparse_status = cusparseXcoo2csr(cusparse_handle, coo.row_idx, coo.nnz, coo.m, csr.row_idx, CUSPARSE_INDEX_BASE_ZERO);
+#endif
+	cusp_util::handle_error(cusparse_status,"coo to csr");
+
+//	pp<Z,T><<<1,1>>>(csr.row_idx,csr.m);
+//	cudaDeviceSynchronize();
+#if !UNIFIED_MEMORY
+	cudaFree(coo_row_idx);
+	cutil::safeMalloc<Z,uint64_t>(&(csr.col_idx),sizeof(Z)*coo.nnz,"csr col_idx alloc");//COL IDX FOR CSR
+	cutil::safeMalloc<T,uint64_t>(&(csr.values),sizeof(T)*coo.nnz,"csr values alloc");
+	cutil::safeCopyToDevice<Z,uint64_t>(csr.col_idx, coo.col_idx,sizeof(Z)*coo.nnz, "csr copy to csr.col_idx");
+	cutil::safeCopyToDevice<T,uint64_t>(csr.values, coo.values,sizeof(T)*coo.nnz, "csr copy to csr.values");
+#else
+	csr.col_idx = coo.col_idx;
+	csr.values = coo.values;
+#endif
+
+}
+
+template<class Z, class T>
 void BenchSPMV<Z,T>::power_method()
 {
 	T *dx, *dy;
@@ -193,11 +251,16 @@ void BenchSPMV<Z,T>::power_method()
 	T lambda_next = 0.0f;
 
 	//Allocation and Random Initialization//
+#ifndef UNIFIED_MEMORY
  	cutil::safeMalloc<T,uint64_t>(&(dx),sizeof(T)*coo.m,"dx values alloc");
 	cutil::safeMalloc<T,uint64_t>(&(dy),sizeof(T)*coo.m,"dy values alloc");
+#else
+ 	cutil::safeMallocHost<T,uint64_t>(&(dx),sizeof(T)*coo.m,"dx values alloc");
+	cutil::safeMallocHost<T,uint64_t>(&(dy),sizeof(T)*coo.m,"dy values alloc");
+#endif
+
 	cutil::cudaInitRandStates();
 	cutil::cudaRandInit<T,uint64_t>(dx,coo.m);
-
 	cusparse_status = cusparseCreateMatDescr(&cusparse_descrA);
 	cusp_util::handle_error(cusparse_status,"create matrix descrA");
     cusparseSetMatIndexBase(cusparse_descrA,CUSPARSE_INDEX_BASE_ZERO);
@@ -214,7 +277,7 @@ void BenchSPMV<Z,T>::power_method()
 			default:
 				std::cout << "FORMAT <" << format_names[format] << "> NOT SUPPORTED!!!" << std::endl;
 		}
-
+		//return ;
 		//euclidean norm of dx
 		std::cout << "calculate normalize value ..." << std::endl;
 		cublas_status = cublasDnrm2_v2(cublas_handle, csr.m, dx, 1, &nrm2_x );
@@ -253,8 +316,13 @@ void BenchSPMV<Z,T>::power_method()
 		cublas_util::handle_error(cublas_status,"calculate lambda = y**T*x");
 	}
 
+#ifndef UNIFIED_MEMORY
 	cudaFree(dx);
 	cudaFree(dy);
+#else
+	cudaFreeHost(dx);
+	cudaFreeHost(dy);
+#endif
 	cusparse_status = cusparseDestroyMatDescr(cusparse_descrA);
 	cusp_util::handle_error(cusparse_status,"destroy matrix descrA");
 
