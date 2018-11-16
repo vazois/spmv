@@ -25,7 +25,7 @@ static int formats[] = {
 		BSR
 };
 
-#define UNIFIED_MEMORY 0
+#define UNIFIED_MEMORY 1
 
 
 template<class Z, class T>

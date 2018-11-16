@@ -113,6 +113,18 @@ namespace cutil{
 	}
 
 	/*
+	 * Allocating managed memory
+	 * addr: Address on GPU
+	 * size: Data size in bytes
+	 * msg: Error message to be displayed
+	 */
+	template<typename DATA_T, typename SIZE_T>
+	void safeMallocManaged(DATA_T **addr, SIZE_T size, std::string msg){
+		error = cudaMalloc(&(*addr), size);
+		cudaCheckErr(error, "Error Allocating device " + msg);
+	}
+
+	/*
 	 * Allocating Pinned Memory
 	 *
 	 * addr: Address on GPU
