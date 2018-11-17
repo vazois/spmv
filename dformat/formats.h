@@ -40,6 +40,23 @@ struct csr_format
 	T *values = NULL;
 };
 
+template<class Z,class T>
+struct bsr_format{
+	Z nnz;
+	Z m;
+	Z blockDim;
+	Z mb;
+	Z nb;
+	Z nnzb;
+	Z base;
+
+	Z *bsrRowPtrA = NULL;
+	Z *bsrColIndA = NULL;
+	T *bsrValA = NULL;
+
+	cusparseDirection_t dir;
+};
+
 static bool	sort_edge_asc(const edge &a, const edge &b)
 {
 	if(a.first == b.first)

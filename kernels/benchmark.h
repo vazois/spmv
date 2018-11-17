@@ -7,26 +7,58 @@
 
 #define FORMAT_NUM 4
 #define CSR 0
-#define ELL 1
+#define BSR 1
 #define HYB 2
-#define BSR 3
+#define ELL 3
 
 static std::string format_names[] ={
 		"CSR",
-		"ELL",
+		"BSR",
 		"HYB",
-		"BSR"
+		"ELL"
 };
 
 static int formats[] = {
 		CSR,
-		ELL,
+		BSR,
 		HYB,
-		BSR
+		ELL
 };
 
 #define UNIFIED_MEMORY 1
 
+template<class Z, class T>
+__global__ void set_one(T *values, Z nnz)
+{
+	Z tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if ( tid < nnz )
+	{
+		values [tid] = 1.0f;
+	}
+}
+
+template<class Z>
+class sort_indices_asc
+{
+   private:
+     Z *rows;
+     Z *cols;
+
+   public:
+     sort_indices_asc(Z* rows, Z* cols){
+    	 this->rows = rows;
+    	 this->cols = cols;
+     }
+     bool operator()(Z i, Z j) const {
+    	 if(rows[i] == rows[j])
+    	 {
+    		 return cols[i]<cols[j];
+    	 }else{
+    		 return rows[i]<rows[j];
+    	 }
+     }
+};
 
 template<class Z, class T>
 class BenchSPMV{
@@ -37,27 +69,69 @@ class BenchSPMV{
 		};
 
 		~BenchSPMV(){
-		#if UNIFIED_MEMORY
-			if(coo.row_idx != NULL) cudaFreeHost(coo.row_idx); if(coo.col_idx != NULL) cudaFreeHost(coo.col_idx); if(coo.values != NULL) cudaFreeHost(coo.values);
-			if(csr.row_idx != NULL) cudaFreeHost(csr.row_idx); if(csr.col_idx != NULL) cudaFreeHost(csr.col_idx); if(csr.values != NULL) cudaFreeHost(csr.values);
-		#else
-			if(coo.row_idx != NULL) free(coo.row_idx); if(coo.col_idx != NULL) free(coo.col_idx); if(coo.values != NULL) free(coo.values);
-			if(csr.row_idx != NULL) cudaFree(csr.row_idx); if(csr.col_idx != NULL) cudaFree(csr.col_idx); if(csr.values != NULL) cudaFree(csr.values);
-		#endif
-
+			free_coo();
+			free_csr();
+			free_bsr();
 		};
 
 		void load_coo(std::string fname);
-		void coo_to_csr_old();
 		void coo_to_csr();
+		void csr_to_bsr();
 
 		void power_method();
-
 	private:
 		coo_format<Z,T> coo;
 		csr_format<Z,T> csr;
+		bsr_format<Z,T> bsr;
 
 		uint64_t count_lines(std::string fname);
+		void sort_coo();
+		void sort_coo_host();
+
+		void free_coo()
+		{
+		#if UNIFIED_MEMORY
+			if(coo.row_idx != NULL){
+				cudaFreeHost(coo.row_idx); coo.row_idx = NULL;
+			}
+			if(coo.col_idx != NULL){
+				cudaFreeHost(coo.col_idx); coo.col_idx = NULL;
+			}
+			if(coo.values != NULL)
+			{
+				cudaFreeHost(coo.values); coo.values = NULL;
+			}
+		#else
+			if(coo.row_idx != NULL){
+				cudaFree(coo.row_idx); coo.row_idx = NULL;
+			}
+			if(coo.col_idx != NULL){
+				cudaFree(coo.col_idx); coo.col_idx = NULL;
+			}
+			if(coo.values != NULL)
+			{
+				cudaFree(coo.values); coo.values = NULL;
+			}
+		#endif
+		}
+
+		void free_csr()
+		{
+		#if UNIFIED_MEMORY
+			if(csr.row_idx != NULL) cudaFreeHost(csr.row_idx); if(csr.col_idx != NULL) cudaFreeHost(csr.col_idx); if(csr.values != NULL) cudaFreeHost(csr.values);
+		#else
+			if(csr.row_idx != NULL) cudaFree(csr.row_idx); if(csr.col_idx != NULL) cudaFree(csr.col_idx); if(csr.values != NULL) cudaFree(csr.values);
+		#endif
+		}
+
+		void free_bsr()
+		{
+		#if UNIFIED_MEMORY
+			if(bsr.bsrRowPtrA != NULL) cudaFreeHost(bsr.bsrRowPtrA); if(bsr.bsrColIndA != NULL) cudaFreeHost(bsr.bsrColIndA); if(bsr.bsrValA != NULL) cudaFreeHost(bsr.bsrValA);
+		#else
+			if(bsr.bsrRowPtrA != NULL) cudaFree(bsr.bsrRowPtrA); if(bsr.bsrColIndA != NULL) cudaFree(bsr.bsrColIndA); if(bsr.bsrValA != NULL) cudaFree(bsr.bsrValA);
+		#endif
+		}
 };
 
 template<class Z, class T>
@@ -98,6 +172,60 @@ uint64_t BenchSPMV<Z,T>::count_lines(std::string fname)
 }
 
 template<class Z, class T>
+void BenchSPMV<Z,T>::sort_coo_host()
+{
+	Z *indices = (Z*)malloc(sizeof(Z)*coo.nnz);
+	for(uint64_t i = 0; i < coo.nnz; i++) indices[i];
+	std::cout << "Sorting coo indices ..." << std::endl;
+	std::sort(indices, indices+coo.nnz, sort_indices(coo.row_idx,coo.col_idx));
+}
+
+template<class Z, class T>
+void BenchSPMV<Z,T>::sort_coo()
+{
+	Z *d_P = NULL;
+	void *pBuffer = NULL;
+	size_t pBufferSizeInBytes = 0;
+	cusparse_status = cusparseXcoosort_bufferSizeExt(
+			cusparse_handle,
+			coo.m,
+			coo.m,
+			coo.nnz,
+			coo.row_idx,
+			coo.col_idx,
+			&pBufferSizeInBytes
+			);
+	cusp_util::handle_error(cusparse_status,"coosort buffersizeext");
+	printf("pBufferSizeInBytes = %lld bytes \n", (long long)pBufferSizeInBytes);
+	cutil::safeMallocHost<void,uint64_t>(&(pBuffer),sizeof(char)*pBufferSizeInBytes,"buffer alloc");
+	cutil::safeMallocHost<Z,uint64_t>(&(d_P),sizeof(Z)*coo.nnz,"d_P");
+
+	//Initialize permutation vector
+	cusparse_status = cusparseCreateIdentityPermutation(
+			cusparse_handle,
+			coo.nnz,
+			d_P
+			);
+	cusp_util::handle_error(cusparse_status,"coo cusparseCreateIdentityPermutation");
+
+	//sort COO format by Row
+	cusparse_status = cusparseXcoosortByRow(
+				cusparse_handle,
+				coo.m,
+				coo.m,
+				coo.nnz,
+				coo.row_idx,
+				coo.col_idx,
+				d_P,
+				pBuffer
+			);
+	cusp_util::handle_error(cusparse_status,"coo cusparseXcoosortByRow");
+	//Deallocate memory
+	cudaFreeHost(pBuffer);
+	cudaFreeHost(d_P);
+}
+
+template<class Z, class T>
 void BenchSPMV<Z,T>::load_coo(std::string fname)
 {
 	std::cout << "Counting edges ... " << std::endl;
@@ -105,15 +233,13 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 	coo.nnz = edge_num;
 
 	std::cout << "Edges ... " << edge_num << std::endl;
-#if UNIFIED_MEMORY
+	#if UNIFIED_MEMORY
 	cutil::safeMallocHost<Z,uint64_t>(&(coo.row_idx),sizeof(Z)*coo.nnz,"coo coo.row_idx alloc");//ROW IDX FOR COO
 	cutil::safeMallocHost<Z,uint64_t>(&(coo.col_idx),sizeof(Z)*coo.nnz,"coo coo.col_idx alloc");//ROW IDX FOR COO
-	cutil::safeMallocHost<T,uint64_t>(&(coo.values),sizeof(T)*coo.nnz,"coo coo.values alloc");//ROW IDX FOR COO
-#else
+	#else
 	coo.row_idx = (Z*)malloc(sizeof(Z)*coo.nnz);//Allocate coo.row_idx
 	coo.col_idx = (Z*)malloc(sizeof(Z)*coo.nnz);//Allocate coo.col_idx
-	coo.values = (T*)malloc(sizeof(T)*coo.nnz);//Allocate coo.values
-#endif
+	#endif
 	//////////////////////////////////////////////////////
 	//Load//
 	FILE *fp = fopen(fname.c_str(), "r");
@@ -159,50 +285,25 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 	idx_bounds.mn = std::min(mn[0],mn[1]);
 	fclose(fp);
 
+	//Sort coo//
+	coo.m = (idx_bounds.mx - idx_bounds.mn + 1);
+	//sort_coo();
 	//////////////////////////////////////////////////////
 	std::cout << "Making index base 0 ... " << std::endl;
 	for(uint64_t i = 0; i < coo.nnz; i++)
 	{
+		if (i < 350){ std::cout << coo.row_idx[i] << " -- " << coo.col_idx[i] << std::endl; }
 		coo.row_idx[i] -= idx_bounds.mn;
 		coo.col_idx[i] -= idx_bounds.mn;
-		coo.values[i] = 1.0f;
 	}
-	coo.m = (idx_bounds.mx - idx_bounds.mn + 1);
-}
-
-template<class Z, class T>
-void BenchSPMV<Z,T>::coo_to_csr_old()
-{
-	//COO Data
-	std::cout << "Converting ... " << coo.m << std::endl;
-	Z *coo_row_idx = NULL;
-	cutil::safeMalloc<Z,uint64_t>(&(coo_row_idx),sizeof(Z)*coo.nnz,"coo row_idx alloc");//ROW IDX FOR COO
-	cutil::safeCopyToDevice<Z,uint64_t>(coo_row_idx, coo.row_idx,sizeof(Z)*coo.nnz, "coo.row_idx copy to coo_row_idx");
-
-	//CSR Data
-	csr.m = coo.m;
-	csr.nnz = coo.nnz;
-	cutil::safeMalloc<Z,uint64_t>(&(csr.row_idx),sizeof(Z)*(csr.m+1),"csr row_idx alloc");//ROW IDX FOR CSR
-
-	std::cout << "Converting data to csr ..." <<std::endl;
-	cusparse_status = cusparseXcoo2csr(cusparse_handle, coo_row_idx, coo.nnz, coo.m, csr.row_idx, CUSPARSE_INDEX_BASE_ZERO);
-	cusp_util::handle_error(cusparse_status,"coo to csr");
-
-//	pp<Z,T><<<1,1>>>(csr.row_idx,csr.m);
-//	cudaDeviceSynchronize();
-	cudaFree(coo_row_idx);
-
-	cutil::safeMalloc<Z,uint64_t>(&(csr.col_idx),sizeof(Z)*coo.nnz,"csr col_idx alloc");//COL IDX FOR CSR
-	cutil::safeMalloc<T,uint64_t>(&(csr.values),sizeof(T)*coo.nnz,"csr values alloc");
-	cutil::safeCopyToDevice<Z,uint64_t>(csr.col_idx, coo.col_idx,sizeof(Z)*coo.nnz, "csr copy to csr.col_idx");
-	cutil::safeCopyToDevice<T,uint64_t>(csr.values, coo.values,sizeof(T)*coo.nnz, "csr copy to csr.values");
+	do{ std::cout << '\n' << "Press a key to continue..."; } while (std::cin.get() != '\n');
 }
 
 template<class Z, class T>
 void BenchSPMV<Z,T>::coo_to_csr()
 {
 	//COO Data
-	std::cout << "Converting ... " << coo.m << std::endl;
+	std::cout << "Converting coo to csr ... " << coo.m << std::endl;
 #if !UNIFIED_MEMORY
 	Z *coo_row_idx = NULL;
 	cutil::safeMalloc<Z,uint64_t>(&(coo_row_idx),sizeof(Z)*coo.nnz,"coo row_idx alloc");//ROW IDX FOR COO
@@ -218,27 +319,89 @@ void BenchSPMV<Z,T>::coo_to_csr()
 	cutil::safeMallocHost<Z,uint64_t>(&(csr.row_idx),sizeof(Z)*(csr.m+1),"csr row_idx alloc");//ROW IDX FOR CSR
 #endif
 
-	std::cout << "Converting data to csr ..." <<std::endl;
+	std::cout << "Calculating row indices ..." <<std::endl;
 #if !UNIFIED_MEMORY
 	cusparse_status = cusparseXcoo2csr(cusparse_handle, coo_row_idx, coo.nnz, coo.m, csr.row_idx, CUSPARSE_INDEX_BASE_ZERO);
 #else
 	cusparse_status = cusparseXcoo2csr(cusparse_handle, coo.row_idx, coo.nnz, coo.m, csr.row_idx, CUSPARSE_INDEX_BASE_ZERO);
 #endif
-	cusp_util::handle_error(cusparse_status,"coo to csr");
+	cusp_util::handle_error(cusparse_status,"csr row indices");
 
-//	pp<Z,T><<<1,1>>>(csr.row_idx,csr.m);
-//	cudaDeviceSynchronize();
+	std::cout << "Initializing csr col indices ..." << std::endl;
 #if !UNIFIED_MEMORY
 	cudaFree(coo_row_idx);
-	cutil::safeMalloc<Z,uint64_t>(&(csr.col_idx),sizeof(Z)*coo.nnz,"csr col_idx alloc");//COL IDX FOR CSR
-	cutil::safeMalloc<T,uint64_t>(&(csr.values),sizeof(T)*coo.nnz,"csr values alloc");
+	cutil::safeMalloc<Z,uint64_t>(&(csr.col_idx),sizeof(Z)*coo.nnz,"csr col indices alloc");
 	cutil::safeCopyToDevice<Z,uint64_t>(csr.col_idx, coo.col_idx,sizeof(Z)*coo.nnz, "csr copy to csr.col_idx");
-	cutil::safeCopyToDevice<T,uint64_t>(csr.values, coo.values,sizeof(T)*coo.nnz, "csr copy to csr.values");
 #else
-	csr.col_idx = coo.col_idx;
-	csr.values = coo.values;
+	cutil::safeMallocHost<Z,uint64_t>(&(csr.col_idx),sizeof(Z)*coo.nnz,"csr col indices alloc");
+	memcpy(csr.col_idx, coo.col_idx,sizeof(Z)*coo.nnz);
+	//csr.col_idx = coo.col_idx;
 #endif
 
+	for(uint32_t i = 0; i < 2; i++)
+	{
+		std::cout << csr.row_idx[i] <<" ";
+	}
+	std::cout << std::endl;
+}
+
+template<class Z, class T>
+void BenchSPMV<Z,T>::csr_to_bsr()
+{
+	coo_to_csr();//TODO:comment out since csr is first to be created//
+
+	bsr.blockDim = 4;
+	bsr.dir = CUSPARSE_DIRECTION_COLUMN;
+	bsr.m = csr.m;
+	bsr.mb = (bsr.m + bsr.blockDim - 1)/bsr.blockDim;
+#if !UNIFIED_MEMORY
+	cutil::safeMalloc<Z,uint64_t>(&(bsr.bsrRowPtrA),sizeof(Z)*(bsr.mb+1),"bsrRowPtrC alloc");
+#else
+	cutil::safeMallocHost<Z,uint64_t>(&(bsr.bsrRowPtrA),sizeof(Z)*(bsr.mb+1),"bsrRowPtrC alloc");
+#endif
+	//Calculate nnzb
+	int *nnzTotalDevHostPtr = &bsr.nnzb;
+	cusparse_status = cusparseXcsr2bsrNnz(cusparse_handle, bsr.dir, bsr.m, bsr.m,
+				cusparse_descrA,
+				csr.row_idx, csr.col_idx,
+				bsr.blockDim,
+				cusparse_descrA,
+				bsr.bsrRowPtrA,
+				nnzTotalDevHostPtr
+			);
+	cusp_util::handle_error(cusparse_status,"bsrNnz error");
+
+	if (nnzTotalDevHostPtr != NULL){
+		bsr.nnzb = *nnzTotalDevHostPtr;
+	}else{
+	#if !UNIFIED_MEMORY
+		cutil::safeCopyToHost<int,uint64_t>(&bsr.nnzb, bsr.bsrRowPtrA+bsr.mb,sizeof(int), "copy nnzb to host");
+		cutil::safeCopyToHost<int,uint64_t>(&bsr.base, bsr.bsrRowPtrA,sizeof(int), "copy base to host");
+	#else
+		bsr.nnzb = bsr.bsrRowPtrA[bsr.mb];
+		bsr.base = bsr.bsrRowPtrA[0];
+	#endif
+		bsr.nnzb -= bsr.base;
+	}
+
+	//Allocate space for columns and values
+	#if !UNIFIED_MEMORY
+		cutil::safeMalloc<Z,uint64_t>(&(bsr.bsrColIndA),sizeof(Z)*bsr.nnzb,"bsrColIndC alloc");
+		cutil::safeMalloc<T,uint64_t>(&(bsr.bsrValA),sizeof(T)*bsr.nnzb,"bsrValC alloc");
+	#else
+		cutil::safeMallocHost<Z,uint64_t>(&(bsr.bsrColIndA),sizeof(Z)*bsr.nnzb,"bsrColIndC alloc");
+		cutil::safeMallocHost<T,uint64_t>(&(bsr.bsrValA),sizeof(T)*bsr.nnzb,"bsrValC alloc");
+	#endif
+
+	std::cout << "Converting data to bsr ..." << std::endl;
+	cusparse_status = cusparseDcsr2bsr(cusparse_handle, bsr.dir, bsr.m, bsr.m,
+				cusparse_descrA,
+				csr.values, csr.row_idx, csr.col_idx,
+				bsr.blockDim,
+				cusparse_descrA,
+				bsr.bsrValA, bsr.bsrRowPtrA, bsr.bsrColIndA
+			);
+	cusp_util::handle_error(cusparse_status,"csr to bsr");
 }
 
 template<class Z, class T>
@@ -251,16 +414,25 @@ void BenchSPMV<Z,T>::power_method()
 	T lambda_next = 0.0f;
 
 	//Allocation and Random Initialization//
+	coo_to_csr();
+	free_coo();
 #ifndef UNIFIED_MEMORY
  	cutil::safeMalloc<T,uint64_t>(&(dx),sizeof(T)*coo.m,"dx values alloc");
 	cutil::safeMalloc<T,uint64_t>(&(dy),sizeof(T)*coo.m,"dy values alloc");
+	cutil::safeMalloc<T,uint64_t>(&(csr.values),sizeof(T)*csr.nnz,"coo.values alloc");//TODO:Initialize to one
+	dim3 csr_init_block(256,1,1);
+	dim3 csr_init_grid((csr.nnz - 1)/256 + 1,1,1);
+	set_one<<<csr_init_grid,csr_init_block>>>(csr.values,csr.nnz);
+	cutil::cudaCheckErr(cudaDeviceSynchronize(),"Error executing set_one");
 #else
  	cutil::safeMallocHost<T,uint64_t>(&(dx),sizeof(T)*coo.m,"dx values alloc");
 	cutil::safeMallocHost<T,uint64_t>(&(dy),sizeof(T)*coo.m,"dy values alloc");
+	cutil::safeMallocHost<T,uint64_t>(&(csr.values),sizeof(T)*coo.nnz,"coo.values alloc");//TODO:
+	//for(uint32_t i = 0; i < csr.nnz; i++) csr.values[i] = 1.0f;
 #endif
 
 	cutil::cudaInitRandStates();
-	cutil::cudaRandInit<T,uint64_t>(dx,coo.m);
+	cutil::cudaRandInit<T,uint64_t>(dx,csr.m);
 	cusparse_status = cusparseCreateMatDescr(&cusparse_descrA);
 	cusp_util::handle_error(cusparse_status,"create matrix descrA");
     cusparseSetMatIndexBase(cusparse_descrA,CUSPARSE_INDEX_BASE_ZERO);
@@ -272,12 +444,18 @@ void BenchSPMV<Z,T>::power_method()
 
 		switch(format){
 			case CSR:
-				coo_to_csr();
+				std::cout << "<<<<< Testing CSR Format >>>>>" << std::endl;
+				break;
+			case BSR:
+				std::cout << "<<<<< Testing BSR Format >>>>>" << std::endl;
+				csr_to_bsr();
 				break;
 			default:
+
 				std::cout << "FORMAT <" << format_names[format] << "> NOT SUPPORTED!!!" << std::endl;
+				break;
 		}
-		//return ;
+
 		//euclidean norm of dx
 		std::cout << "calculate normalize value ..." << std::endl;
 		cublas_status = cublasDnrm2_v2(cublas_handle, csr.m, dx, 1, &nrm2_x );
@@ -306,6 +484,9 @@ void BenchSPMV<Z,T>::power_method()
                                          &h_zero,
                                          dy);
 				cusp_util::handle_error(cusparse_status,"csr_spmv execution");
+				break;
+			case BSR:
+
 				break;
 			default:
 				std::cout << "FORMAT <" << format_names[format] << "> NOT SUPPORTED!!!" << std::endl;

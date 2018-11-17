@@ -13,7 +13,7 @@ static cusparseMatDescr_t cusparse_descrA;
 namespace cusp_util{
 
 	void handle_error(cusparseStatus_t &status, std::string msg){
-
+		cudaDeviceSynchronize();
 		switch(status){
 			case CUSPARSE_STATUS_SUCCESS:
 				break;
