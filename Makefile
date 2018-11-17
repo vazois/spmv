@@ -1,6 +1,6 @@
 #NVCC=/usr/local/cuda-8.0/bin/nvcc
-NVCC=/usr/local/cuda-9.1/bin/nvcc
-NVCC_LIBS=-L/usr/local/cuda-9.1/lib64/
+NVCC=/usr/local/cuda-9.0/bin/nvcc
+NVCC_LIBS=-L/usr/local/cuda-9.0/lib64/
 
 GEXE=gmain
 

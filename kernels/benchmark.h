@@ -230,6 +230,7 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 {
 	std::cout << "Counting edges ... " << std::endl;
 	uint64_t edge_num = count_lines(fname);
+	//uint64_t edge_num =1468365182;
 	coo.nnz = edge_num;
 
 	std::cout << "Edges ... " << edge_num << std::endl;
@@ -259,6 +260,7 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 	std::cout << "Loading: [" << (uint32_t)((((double)bytes_read)/(bytes_total))*100) << "]\r";
 	std::cout.flush();
 	uint64_t i = 0;
+	bool not_sorted = false;
 	while(fscanf(fp,"%u\t%u",&n[0],&n[1]) > 0)
 	{
 		//std::cout << n[0] << "-->" << n[1] << std::endl;
@@ -277,6 +279,10 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 			std::cout.flush();
 			bytes_progress += BYTES_FRAME;
 		}
+		if(i > 1 && coo.row_idx[i-1] > coo.row_idx[i])
+		{
+			not_sorted = true;
+		}
 	};
 	std::cout.flush();
 	std::cout << "max: " << mx[0] << "," << mx[1] << std::endl;
@@ -287,7 +293,10 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 
 	//Sort coo//
 	coo.m = (idx_bounds.mx - idx_bounds.mn + 1);
-	//sort_coo();
+	if(not_sorted){
+		do{ std::cout << '\n' << "Acknowledge sorting coo indices (large memory)..."; } while (std::cin.get() != '\n');
+		//sort_coo();
+	}
 	//////////////////////////////////////////////////////
 	std::cout << "Making index base 0 ... " << std::endl;
 	for(uint64_t i = 0; i < coo.nnz; i++)
@@ -296,7 +305,7 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 		coo.row_idx[i] -= idx_bounds.mn;
 		coo.col_idx[i] -= idx_bounds.mn;
 	}
-	do{ std::cout << '\n' << "Press a key to continue..."; } while (std::cin.get() != '\n');
+
 }
 
 template<class Z, class T>
@@ -348,7 +357,7 @@ void BenchSPMV<Z,T>::coo_to_csr()
 template<class Z, class T>
 void BenchSPMV<Z,T>::csr_to_bsr()
 {
-	coo_to_csr();//TODO:comment out since csr is first to be created//
+	//coo_to_csr();//TODO:comment out since csr is first to be created//
 
 	bsr.blockDim = 4;
 	bsr.dir = CUSPARSE_DIRECTION_COLUMN;
@@ -438,7 +447,7 @@ void BenchSPMV<Z,T>::power_method()
     cusparseSetMatIndexBase(cusparse_descrA,CUSPARSE_INDEX_BASE_ZERO);
     cusparseSetMatType(cusparse_descrA, CUSPARSE_MATRIX_TYPE_GENERAL );
 
-	for(uint32_t i = 0; i < 1; i++)
+	for(uint32_t i = 1; i < 2; i++)
 	{
 		int format = formats[i];
 
@@ -451,7 +460,6 @@ void BenchSPMV<Z,T>::power_method()
 				csr_to_bsr();
 				break;
 			default:
-
 				std::cout << "FORMAT <" << format_names[format] << "> NOT SUPPORTED!!!" << std::endl;
 				break;
 		}
@@ -467,9 +475,9 @@ void BenchSPMV<Z,T>::power_method()
 		cublas_status = cublasDscal_v2(cublas_handle, csr.m, &one_over_nrm2_x, dx, 1 );
 		cublas_util::handle_error(cublas_status,"normalize vector");
 
+		std::cout << "y = A*x" << std::endl;
 		switch(format){
 			case CSR:
-				std::cout << "y = A*x" << std::endl;
 				cusparse_status = cusparseDcsrmv_mp(cusparse_handle,
                                          CUSPARSE_OPERATION_NON_TRANSPOSE,
                                          csr.m,//rows
@@ -486,7 +494,14 @@ void BenchSPMV<Z,T>::power_method()
 				cusp_util::handle_error(cusparse_status,"csr_spmv execution");
 				break;
 			case BSR:
-
+				cusparse_status = cusparseDbsrmv(
+										cusparse_handle,
+										bsr.dir,
+										CUSPARSE_OPERATION_NON_TRANSPOSE,
+										bsr.mb, bsr.mb, bsr.nnzb,
+										&h_one,
+										cusparse_descrA,
+										bsr.bsrValA, bsr.bsrRowPtrA, bsr.bsrColIndA, bsr.blockDim, dx, &h_zero, dy);
 				break;
 			default:
 				std::cout << "FORMAT <" << format_names[format] << "> NOT SUPPORTED!!!" << std::endl;
