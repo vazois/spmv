@@ -10,6 +10,8 @@ static cusparseHandle_t cusparse_handle;
 static cusparseStatus_t cusparse_status;
 static cusparseMatDescr_t cusparse_descrA;
 
+static cusparseHybMat_t hybA;
+
 namespace cusp_util{
 
 	void handle_error(cusparseStatus_t &status, std::string msg){

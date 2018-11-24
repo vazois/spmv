@@ -4,12 +4,15 @@
 #include "../fio/load_tsv.h"
 #include "../dformat/convert.h"
 #include "../tools/Utils.h"
+#include "../tools/Time.h"
 
 #define FORMAT_NUM 4
 #define CSR 0
 #define BSR 1
 #define HYB 2
 #define ELL 3
+
+#define ITER 10
 
 static std::string format_names[] ={
 		"CSR",
@@ -26,6 +29,7 @@ static int formats[] = {
 };
 
 #define UNIFIED_MEMORY 1
+#define DEBUG_SPMV true
 
 template<class Z, class T>
 __global__ void set_one(T *values, Z nnz)
@@ -72,11 +76,14 @@ class BenchSPMV{
 			free_coo();
 			free_csr();
 			free_bsr();
+			free_hyb();
+			clear_timers();
 		};
 
 		void load_coo(std::string fname);
 		void coo_to_csr();
 		void csr_to_bsr();
+		void csr_to_hyb();
 
 		void power_method();
 	private:
@@ -88,51 +95,92 @@ class BenchSPMV{
 		void sort_coo();
 		void sort_coo_host();
 
-		void free_coo()
-		{
-		#if UNIFIED_MEMORY
-			if(coo.row_idx != NULL){
-				cudaFreeHost(coo.row_idx); coo.row_idx = NULL;
-			}
-			if(coo.col_idx != NULL){
-				cudaFreeHost(coo.col_idx); coo.col_idx = NULL;
-			}
-			if(coo.values != NULL)
-			{
-				cudaFreeHost(coo.values); coo.values = NULL;
-			}
-		#else
-			if(coo.row_idx != NULL){
-				cudaFree(coo.row_idx); coo.row_idx = NULL;
-			}
-			if(coo.col_idx != NULL){
-				cudaFree(coo.col_idx); coo.col_idx = NULL;
-			}
-			if(coo.values != NULL)
-			{
-				cudaFree(coo.values); coo.values = NULL;
-			}
-		#endif
-		}
+		void free_coo();
+		void free_csr();
+		void free_bsr();
+		void free_hyb();
 
-		void free_csr()
-		{
-		#if UNIFIED_MEMORY
-			if(csr.row_idx != NULL) cudaFreeHost(csr.row_idx); if(csr.col_idx != NULL) cudaFreeHost(csr.col_idx); if(csr.values != NULL) cudaFreeHost(csr.values);
-		#else
-			if(csr.row_idx != NULL) cudaFree(csr.row_idx); if(csr.col_idx != NULL) cudaFree(csr.col_idx); if(csr.values != NULL) cudaFree(csr.values);
-		#endif
-		}
+		void benchmark();
+		void clear_timers();
+		double tt_norm_val;
+		double tt_norm;
+		double tt_spmv;
+		double tt_lambda;
+		Time<millis> tt;
 
-		void free_bsr()
-		{
-		#if UNIFIED_MEMORY
-			if(bsr.bsrRowPtrA != NULL) cudaFreeHost(bsr.bsrRowPtrA); if(bsr.bsrColIndA != NULL) cudaFreeHost(bsr.bsrColIndA); if(bsr.bsrValA != NULL) cudaFreeHost(bsr.bsrValA);
-		#else
-			if(bsr.bsrRowPtrA != NULL) cudaFree(bsr.bsrRowPtrA); if(bsr.bsrColIndA != NULL) cudaFree(bsr.bsrColIndA); if(bsr.bsrValA != NULL) cudaFree(bsr.bsrValA);
-		#endif
-		}
 };
+
+template<class Z, class T>
+void BenchSPMV<Z,T>::benchmark()
+{
+	double tt_pmethod = this->tt_norm_val + this->tt_norm + this->tt_spmv + this->tt_lambda;
+	std::cout << std::fixed << std::setprecision(4);
+	std::cout << "<<<<<<<<<< -----------BENCHMARK----------- >>>>>>>>>>" << std::endl;
+	std::cout << "Op(msec)\t:\tTotal(msec)\t:\tIter<x " << ITER << "> (msec)" << std::endl;
+	std::cout << "norm_val  \t:\t"  << std::setfill('0') << std::setw(7+5) << this->tt_norm_val << "\t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_norm_val/ITER << std::endl;
+	std::cout << "norm     \t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_norm << "\t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_norm/ITER << std::endl;
+	std::cout << "spmv     \t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_spmv << "\t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_spmv/ITER << std::endl;
+	std::cout << "tt_lambda \t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_lambda << "\t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_lambda/ITER << std::endl;
+	std::cout << "power method \t:\t" << std::setfill('0') << std::setw(7+5) << tt_pmethod << "\t:\t" << std::setfill('0') << std::setw(7+5) << tt_pmethod/ITER << std::endl;
+	std::cout << "<<<<<<<<<< ------------------------------- >>>>>>>>>>" << std::endl;
+}
+
+template<class Z, class T>
+void BenchSPMV<Z,T>::clear_timers()
+{
+	this->tt_norm_val = 0;
+	this->tt_norm = 0;
+	this->tt_spmv = 0;
+	this->tt_lambda = 0;
+}
+
+template<class Z, class T>
+void BenchSPMV<Z,T>::free_coo()
+{
+#if UNIFIED_MEMORY
+	if(coo.row_idx != NULL){ cudaFreeHost(coo.row_idx); coo.row_idx = NULL; }
+	if(coo.col_idx != NULL){ cudaFreeHost(coo.col_idx); coo.col_idx = NULL; }
+	if(coo.values != NULL){ cudaFreeHost(coo.values); coo.values = NULL; }
+#else
+	if(coo.row_idx != NULL){ cudaFree(coo.row_idx); coo.row_idx = NULL; }
+	if(coo.col_idx != NULL){ cudaFree(coo.col_idx); coo.col_idx = NULL; }
+	if(coo.values != NULL){ cudaFree(coo.values); coo.values = NULL; }
+#endif
+}
+
+template<class Z, class T>
+void BenchSPMV<Z,T>::free_csr()
+{
+#if UNIFIED_MEMORY
+	if(csr.row_idx != NULL) cudaFreeHost(csr.row_idx);
+	if(csr.col_idx != NULL) cudaFreeHost(csr.col_idx);
+	if(csr.values != NULL) cudaFreeHost(csr.values);
+#else
+	if(csr.row_idx != NULL) cudaFree(csr.row_idx);
+	if(csr.col_idx != NULL) cudaFree(csr.col_idx);
+	if(csr.values != NULL) cudaFree(csr.values);
+#endif
+}
+
+template<class Z, class T>
+void BenchSPMV<Z,T>::free_bsr()
+{
+#if UNIFIED_MEMORY
+	if(bsr.bsrRowPtrA != NULL) cudaFreeHost(bsr.bsrRowPtrA);
+	if(bsr.bsrColIndA != NULL) cudaFreeHost(bsr.bsrColIndA);
+	if(bsr.bsrValA != NULL) cudaFreeHost(bsr.bsrValA);
+#else
+	if(bsr.bsrRowPtrA != NULL) cudaFree(bsr.bsrRowPtrA);
+	if(bsr.bsrColIndA != NULL) cudaFree(bsr.bsrColIndA);
+	if(bsr.bsrValA != NULL) cudaFree(bsr.bsrValA);
+#endif
+}
+
+template<class Z, class T>
+void BenchSPMV<Z,T>::free_hyb()
+{
+	if(hybA != NULL) cusparseDestroyHybMat(hybA);
+}
 
 template<class Z, class T>
 uint64_t BenchSPMV<Z,T>::count_lines(std::string fname)
@@ -285,8 +333,8 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 		}
 	};
 	std::cout.flush();
-	std::cout << "max: " << mx[0] << "," << mx[1] << std::endl;
-	std::cout << "min: " << mn[0] << "," << mn[1] << std::endl;
+	if(DEBUG_SPMV) std::cout << "max: " << mx[0] << "," << mx[1] << std::endl;
+	if(DEBUG_SPMV) std::cout << "min: " << mn[0] << "," << mn[1] << std::endl;
 	idx_bounds.mx = std::max(mx[0],mx[1]);
 	idx_bounds.mn = std::min(mn[0],mn[1]);
 	fclose(fp);
@@ -294,18 +342,19 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 	//Sort coo//
 	coo.m = (idx_bounds.mx - idx_bounds.mn + 1);
 	if(not_sorted){
-		do{ std::cout << '\n' << "Acknowledge sorting coo indices (large memory)..."; } while (std::cin.get() != '\n');
-		//sort_coo();
+		if(DEBUG_SPMV) do{ std::cout << '\n' << "Acknowledge sorting coo indices (large memory)..."; } while (std::cin.get() != '\n');
+		sort_coo();
 	}
 	//////////////////////////////////////////////////////
-	std::cout << "Making index base 0 ... " << std::endl;
-	for(uint64_t i = 0; i < coo.nnz; i++)
-	{
-		if (i < 350){ std::cout << coo.row_idx[i] << " -- " << coo.col_idx[i] << std::endl; }
-		coo.row_idx[i] -= idx_bounds.mn;
-		coo.col_idx[i] -= idx_bounds.mn;
+	if(DEBUG_SPMV){
+		std::cout << "Making index base 0 ... " << std::endl;
+		for(uint64_t i = 0; i < coo.nnz; i++)
+		{
+			if (i < 350){ std::cout << coo.row_idx[i] << " -- " << coo.col_idx[i] << std::endl; }
+			coo.row_idx[i] -= idx_bounds.mn;
+			coo.col_idx[i] -= idx_bounds.mn;
+		}
 	}
-
 }
 
 template<class Z, class T>
@@ -346,12 +395,8 @@ void BenchSPMV<Z,T>::coo_to_csr()
 	memcpy(csr.col_idx, coo.col_idx,sizeof(Z)*coo.nnz);
 	//csr.col_idx = coo.col_idx;
 #endif
-
-	for(uint32_t i = 0; i < 2; i++)
-	{
-		std::cout << csr.row_idx[i] <<" ";
-	}
 	std::cout << std::endl;
+	free_coo();
 }
 
 template<class Z, class T>
@@ -414,6 +459,23 @@ void BenchSPMV<Z,T>::csr_to_bsr()
 }
 
 template<class Z, class T>
+void BenchSPMV<Z,T>::csr_to_hyb()
+{
+	//Create hyb mat
+	cusparse_status = cusparseCreateHybMat(&hybA);
+	cusp_util::handle_error(cusparse_status,"create hyb mat");
+
+	//csr to hyb conversion//
+	cusparse_status = cusparseDcsr2hyb(cusparse_handle, csr.m, csr.m, cusparse_descrA,
+				csr.values, csr.row_idx, csr.col_idx,
+	            hybA,
+				0, //required when partitionType == CUSPARSE_HYB_PARTITION_USER
+	            CUSPARSE_HYB_PARTITION_AUTO);//partitionType: CUSPARSE_HYB_PARTITION_AUTO, CUSPARSE_HYB_PARTITION_USER, CUSPARSE_HYB_PARTITION_MAX
+
+	cusp_util::handle_error(cusparse_status,"csr to hyb");
+}
+
+template<class Z, class T>
 void BenchSPMV<Z,T>::power_method()
 {
 	T *dx, *dy;
@@ -424,7 +486,6 @@ void BenchSPMV<Z,T>::power_method()
 
 	//Allocation and Random Initialization//
 	coo_to_csr();
-	free_coo();
 #ifndef UNIFIED_MEMORY
  	cutil::safeMalloc<T,uint64_t>(&(dx),sizeof(T)*coo.m,"dx values alloc");
 	cutil::safeMalloc<T,uint64_t>(&(dy),sizeof(T)*coo.m,"dy values alloc");
@@ -447,7 +508,7 @@ void BenchSPMV<Z,T>::power_method()
     cusparseSetMatIndexBase(cusparse_descrA,CUSPARSE_INDEX_BASE_ZERO);
     cusparseSetMatType(cusparse_descrA, CUSPARSE_MATRIX_TYPE_GENERAL );
 
-	for(uint32_t i = 1; i < 2; i++)
+	for(uint32_t i = 0; i < 3; i++)
 	{
 		int format = formats[i];
 
@@ -459,57 +520,82 @@ void BenchSPMV<Z,T>::power_method()
 				std::cout << "<<<<< Testing BSR Format >>>>>" << std::endl;
 				csr_to_bsr();
 				break;
+			case HYB:
+				std::cout << "<<<<< Testing HYB Format >>>>>" << std::endl;
+				csr_to_hyb();
+				break;
 			default:
 				std::cout << "FORMAT <" << format_names[format] << "> NOT SUPPORTED!!!" << std::endl;
 				break;
 		}
 
 		//euclidean norm of dx
-		std::cout << "calculate normalize value ..." << std::endl;
-		cublas_status = cublasDnrm2_v2(cublas_handle, csr.m, dx, 1, &nrm2_x );
-		cublas_util::handle_error(cublas_status,"calculate normalize value");
+		for(int j = 0; j < ITER; j++){
+			tt.start();
+			if(DEBUG_SPMV) std::cout << "calculate normalize value ..." << std::endl;
+			cublas_status = cublasDnrm2_v2(cublas_handle, csr.m, dx, 1, &nrm2_x );
+			cublas_util::handle_error(cublas_status,"calculate normalize value");
+			this->tt_norm_val += tt.lap();
 
-		//normalize dx
-		std::cout << "normalize vector ..." << std::endl;
-		T one_over_nrm2_x = 1.0 / nrm2_x;
-		cublas_status = cublasDscal_v2(cublas_handle, csr.m, &one_over_nrm2_x, dx, 1 );
-		cublas_util::handle_error(cublas_status,"normalize vector");
+			//normalize dx
+			tt.start();
+			if(DEBUG_SPMV) std::cout << "normalize vector ..." << std::endl;
+			T one_over_nrm2_x = 1.0 / nrm2_x;
+			cublas_status = cublasDscal_v2(cublas_handle, csr.m, &one_over_nrm2_x, dx, 1 );
+			cublas_util::handle_error(cublas_status,"normalize vector");
+			this->tt_norm += tt.lap();
 
-		std::cout << "y = A*x" << std::endl;
-		switch(format){
-			case CSR:
-				cusparse_status = cusparseDcsrmv_mp(cusparse_handle,
-                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                         csr.m,//rows
-										 csr.m,//cols
-                                         csr.nnz,//nnz
-                                         &h_one,//scalar
-										 cusparse_descrA,
-                                         csr.values,
-                                         csr.row_idx,
-                                         csr.col_idx,
-                                         dx,
-                                         &h_zero,
-                                         dy);
-				cusp_util::handle_error(cusparse_status,"csr_spmv execution");
-				break;
-			case BSR:
-				cusparse_status = cusparseDbsrmv(
-										cusparse_handle,
-										bsr.dir,
-										CUSPARSE_OPERATION_NON_TRANSPOSE,
-										bsr.mb, bsr.mb, bsr.nnzb,
-										&h_one,
-										cusparse_descrA,
-										bsr.bsrValA, bsr.bsrRowPtrA, bsr.bsrColIndA, bsr.blockDim, dx, &h_zero, dy);
-				break;
-			default:
-				std::cout << "FORMAT <" << format_names[format] << "> NOT SUPPORTED!!!" << std::endl;
+			if(DEBUG_SPMV) std::cout << "y = A*x" << std::endl;
+			this->tt.start();
+			switch(format){
+				case CSR:
+					cusparse_status = cusparseDcsrmv_mp(cusparse_handle,
+                                         	 CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         	 csr.m,//rows
+										 	 csr.m,//cols
+                                         	 csr.nnz,//nnz
+                                         	 &h_one,//scalar
+										 	 cusparse_descrA,
+                                         	 csr.values,
+                                         	 csr.row_idx,
+                                         	 csr.col_idx,
+                                         	 dx,
+                                         	 &h_zero,
+                                         	 dy);
+					cusp_util::handle_error(cusparse_status,"csr_spmv execution");
+					break;
+				case BSR:
+					cusparse_status = cusparseDbsrmv(
+											cusparse_handle,
+											bsr.dir,
+											CUSPARSE_OPERATION_NON_TRANSPOSE,
+											bsr.mb, bsr.mb, bsr.nnzb,
+											&h_one,
+											cusparse_descrA,
+											bsr.bsrValA, bsr.bsrRowPtrA, bsr.bsrColIndA, bsr.blockDim, dx, &h_zero, dy);
+					break;
+				case HYB:
+					cusparse_status = cusparseDhybmv(
+											cusparse_handle,
+											CUSPARSE_OPERATION_NON_TRANSPOSE,
+											&h_one,
+											cusparse_descrA,
+											hybA, dx, &h_zero, dy);
+
+					break;
+				default:
+					std::cout << "FORMAT <" << format_names[format] << "> NOT SUPPORTED!!!" << std::endl;
+			}
+			this->tt_spmv += tt.lap();
+
+			this->tt.start();
+			if(DEBUG_SPMV) std::cout << "lambda = y**T*x" << std::endl;
+			cublas_status = cublasDdot_v2 (cublas_handle, csr.m, dx, 1, dy, 1, &lambda_next);
+			cublas_util::handle_error(cublas_status,"calculate lambda = y**T*x");
+			this->tt_lambda += tt.lap();
 		}
-
-		std::cout << "lambda = y**T*x" << std::endl;
-		cublas_status = cublasDdot_v2 (cublas_handle, csr.m, dx, 1, dy, 1, &lambda_next);
-		cublas_util::handle_error(cublas_status,"calculate lambda = y**T*x");
+		this->benchmark();
+		this->clear_timers();
 	}
 
 #ifndef UNIFIED_MEMORY
@@ -576,8 +662,5 @@ void BenchSPMV<Z,T>::power_method()
 
 //	destroy_csr<Z,T>(csr);
 }
-
-
-
 
 #endif
