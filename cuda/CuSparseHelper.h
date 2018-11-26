@@ -15,7 +15,7 @@ static cusparseHybMat_t hybA;
 namespace cusp_util{
 
 	void handle_error(cusparseStatus_t &status, std::string msg){
-		cudaDeviceSynchronize();
+		cutil::cudaCheckErr(cudaDeviceSynchronize(),msg);
 		switch(status){
 			case CUSPARSE_STATUS_SUCCESS:
 				break;

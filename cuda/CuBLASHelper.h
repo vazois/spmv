@@ -11,6 +11,7 @@ namespace cublas_util{
 
 	void handle_error(cublasStatus_t &status, std::string msg)
 	{
+		cutil::cudaCheckErr(cudaDeviceSynchronize(),msg);
 		switch(status){
 			case CUBLAS_STATUS_SUCCESS:
 				break;

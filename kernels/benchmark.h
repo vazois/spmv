@@ -6,6 +6,8 @@
 #include "../tools/Utils.h"
 #include "../tools/Time.h"
 
+#include <unordered_map>
+
 #define FORMAT_NUM 4
 #define CSR 0
 #define BSR 1
@@ -28,7 +30,7 @@ static int formats[] = {
 		ELL
 };
 
-#define UNIFIED_MEMORY 1
+#define UNIFIED_MEMORY 10
 #define DEBUG_SPMV true
 
 template<class Z, class T>
@@ -70,6 +72,8 @@ class BenchSPMV{
 		BenchSPMV(int format){
 			coo.row_idx = NULL; coo.col_idx = NULL; coo.values = NULL;
 			csr.row_idx = NULL; csr.col_idx = NULL; csr.values = NULL;
+			bsr.bsrRowPtrA = NULL; bsr.bsrColIndA = NULL; bsr.bsrValA = NULL;
+			this->clear_timers();
 		};
 
 		~BenchSPMV(){
@@ -100,7 +104,7 @@ class BenchSPMV{
 		void free_bsr();
 		void free_hyb();
 
-		void benchmark();
+		void benchmark(int i);
 		void clear_timers();
 		double tt_norm_val;
 		double tt_norm;
@@ -108,14 +112,19 @@ class BenchSPMV{
 		double tt_lambda;
 		Time<millis> tt;
 
+		double csr_mem;
+		double bsr_mem;
+		double hyb_mem;
+
+		double var_mem;
 };
 
 template<class Z, class T>
-void BenchSPMV<Z,T>::benchmark()
+void BenchSPMV<Z,T>::benchmark(int i)
 {
 	double tt_pmethod = this->tt_norm_val + this->tt_norm + this->tt_spmv + this->tt_lambda;
 	std::cout << std::fixed << std::setprecision(4);
-	std::cout << "<<<<<<<<<< -----------BENCHMARK----------- >>>>>>>>>>" << std::endl;
+	std::cout << "<<<<<<<<<< -----------BENCHMARK("<<format_names[i] << ")----------- >>>>>>>>>>" << std::endl;
 	std::cout << "Op(msec)\t:\tTotal(msec)\t:\tIter<x " << ITER << "> (msec)" << std::endl;
 	std::cout << "norm_val  \t:\t"  << std::setfill('0') << std::setw(7+5) << this->tt_norm_val << "\t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_norm_val/ITER << std::endl;
 	std::cout << "norm     \t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_norm << "\t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_norm/ITER << std::endl;
@@ -179,7 +188,7 @@ void BenchSPMV<Z,T>::free_bsr()
 template<class Z, class T>
 void BenchSPMV<Z,T>::free_hyb()
 {
-	if(hybA != NULL) cusparseDestroyHybMat(hybA);
+	cusparseDestroyHybMat(hybA);
 }
 
 template<class Z, class T>
@@ -309,13 +318,19 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 	std::cout.flush();
 	uint64_t i = 0;
 	bool not_sorted = false;
+	std::unordered_map<Z,Z> nodes;
+	Z ids = 0;
 	while(fscanf(fp,"%u\t%u",&n[0],&n[1]) > 0)
 	{
 		//std::cout << n[0] << "-->" << n[1] << std::endl;
 		mx[0] = std::max(n[0],mx[0]); mx[1] = std::max(n[1],mx[1]);
 		mn[0] = std::min(n[0],mn[0]); mn[1] = std::min(n[1],mn[1]);
-		coo.row_idx[i] = n[0];
-		coo.col_idx[i] = n[1];
+		if(nodes.find(n[0]) == nodes.end()){ nodes.emplace(n[0],ids); ids++;}
+		if(nodes.find(n[1]) == nodes.end()){ nodes.emplace(n[1],ids); ids++;}
+		coo.row_idx[i] = nodes.find(n[0])->second;
+		coo.col_idx[i] = nodes.find(n[1])->second;
+		//coo.row_idx[i] = n[0];
+		//coo.col_idx[i] = n[1];
 		i++;
 
 		bytes_read = ftell(fp);
@@ -327,34 +342,36 @@ void BenchSPMV<Z,T>::load_coo(std::string fname)
 			std::cout.flush();
 			bytes_progress += BYTES_FRAME;
 		}
-		if(i > 1 && coo.row_idx[i-1] > coo.row_idx[i])
-		{
-			not_sorted = true;
-		}
+		if(!not_sorted && i > 1 && coo.row_idx[i-1] > coo.row_idx[i]){ not_sorted = true; }
+		//break;
 	};
 	std::cout.flush();
+	coo.m = nodes.size();
+	//	coo.m = (idx_bounds.mx - idx_bounds.mn + 1);
+	if(DEBUG_SPMV) std::cout << "nodes: " << coo.m << std::endl;
 	if(DEBUG_SPMV) std::cout << "max: " << mx[0] << "," << mx[1] << std::endl;
 	if(DEBUG_SPMV) std::cout << "min: " << mn[0] << "," << mn[1] << std::endl;
+
 	idx_bounds.mx = std::max(mx[0],mx[1]);
 	idx_bounds.mn = std::min(mn[0],mn[1]);
 	fclose(fp);
 
 	//Sort coo//
-	coo.m = (idx_bounds.mx - idx_bounds.mn + 1);
 	if(not_sorted){
-		if(DEBUG_SPMV) do{ std::cout << '\n' << "Acknowledge sorting coo indices (large memory)..."; } while (std::cin.get() != '\n');
+		//if(DEBUG_SPMV) do{ std::cout << '\n' << "Acknowledge sorting coo indices (large memory)..."; } while (std::cin.get() != '\n');
 		sort_coo();
 	}
 	//////////////////////////////////////////////////////
-	if(DEBUG_SPMV){
-		std::cout << "Making index base 0 ... " << std::endl;
-		for(uint64_t i = 0; i < coo.nnz; i++)
-		{
-			if (i < 350){ std::cout << coo.row_idx[i] << " -- " << coo.col_idx[i] << std::endl; }
-			coo.row_idx[i] -= idx_bounds.mn;
-			coo.col_idx[i] -= idx_bounds.mn;
+	std::cout << "Making index base 0 ... " << std::endl;
+	for(uint64_t i = 0; i < coo.nnz; i++)
+	{
+		if (i < 350){
+			std::cout << coo.row_idx[i] << " -- " << coo.col_idx[i] << std::endl;
 		}
+		//coo.row_idx[i] -= idx_bounds.mn;
+		//coo.col_idx[i] -= idx_bounds.mn;
 	}
+	nodes.clear();
 }
 
 template<class Z, class T>
@@ -371,6 +388,7 @@ void BenchSPMV<Z,T>::coo_to_csr()
 	//CSR Data
 	csr.m = coo.m;
 	csr.nnz = coo.nnz;
+	csr_mem = sizeof(Z)*(csr.m+1);
 #if !UNIFIED_MEMORY
 	cutil::safeMalloc<Z,uint64_t>(&(csr.row_idx),sizeof(Z)*(csr.m+1),"csr row_idx alloc");//ROW IDX FOR CSR
 #else
@@ -395,23 +413,28 @@ void BenchSPMV<Z,T>::coo_to_csr()
 	memcpy(csr.col_idx, coo.col_idx,sizeof(Z)*coo.nnz);
 	//csr.col_idx = coo.col_idx;
 #endif
+	for(int i = 0; i < 10; i++){
+		std::cout << csr.row_idx[i] << " ";
+	}
 	std::cout << std::endl;
-	free_coo();
+	csr_mem = sizeof(Z)*(csr.m+1) + sizeof(Z)*coo.nnz + sizeof(T)*csr.nnz;
+	if(DEBUG_SPMV) std::cout << "CSR_MEM: " << csr_mem /(1024*1024) << " MB" << std::endl;
 }
 
 template<class Z, class T>
 void BenchSPMV<Z,T>::csr_to_bsr()
 {
-	//coo_to_csr();//TODO:comment out since csr is first to be created//
 
-	bsr.blockDim = 4;
+	bsr.blockDim = 2;
 	bsr.dir = CUSPARSE_DIRECTION_COLUMN;
 	bsr.m = csr.m;
 	bsr.mb = (bsr.m + bsr.blockDim - 1)/bsr.blockDim;
+	std::cout << "bsr.m: " << bsr.m << "," << " bsr.mb:" << bsr.mb << std::endl;
+	bsr_mem = sizeof(Z)*(bsr.mb+1);
 #if !UNIFIED_MEMORY
-	cutil::safeMalloc<Z,uint64_t>(&(bsr.bsrRowPtrA),sizeof(Z)*(bsr.mb+1),"bsrRowPtrC alloc");
+	cutil::safeMalloc<Z,uint64_t>(&(bsr.bsrRowPtrA),sizeof(Z)*(bsr.mb+1),"bsrRowPtrA alloc");
 #else
-	cutil::safeMallocHost<Z,uint64_t>(&(bsr.bsrRowPtrA),sizeof(Z)*(bsr.mb+1),"bsrRowPtrC alloc");
+	cutil::safeMallocHost<Z,uint64_t>(&(bsr.bsrRowPtrA),sizeof(Z)*(bsr.mb+1),"bsrRowPtrA alloc");
 #endif
 	//Calculate nnzb
 	int *nnzTotalDevHostPtr = &bsr.nnzb;
@@ -435,16 +458,19 @@ void BenchSPMV<Z,T>::csr_to_bsr()
 		bsr.nnzb = bsr.bsrRowPtrA[bsr.mb];
 		bsr.base = bsr.bsrRowPtrA[0];
 	#endif
+		std::cout << "bsr.nnzb: " << bsr.nnzb << "," << " bsr.base: " << bsr.base << std::endl;
 		bsr.nnzb -= bsr.base;
 	}
 
+	bsr_mem += sizeof(Z)*bsr.nnzb + sizeof(T)*(bsr.blockDim*bsr.blockDim)*bsr.nnzb;
+	if(DEBUG_SPMV) std::cout << "BSR_MEM: " << bsr_mem /(1024*1024) << " MB" << std::endl;
 	//Allocate space for columns and values
 	#if !UNIFIED_MEMORY
 		cutil::safeMalloc<Z,uint64_t>(&(bsr.bsrColIndA),sizeof(Z)*bsr.nnzb,"bsrColIndC alloc");
-		cutil::safeMalloc<T,uint64_t>(&(bsr.bsrValA),sizeof(T)*bsr.nnzb,"bsrValC alloc");
+		cutil::safeMalloc<T,uint64_t>(&(bsr.bsrValA),sizeof(T)*(bsr.blockDim*bsr.blockDim)*bsr.nnzb,"bsrValC alloc");
 	#else
-		cutil::safeMallocHost<Z,uint64_t>(&(bsr.bsrColIndA),sizeof(Z)*bsr.nnzb,"bsrColIndC alloc");
-		cutil::safeMallocHost<T,uint64_t>(&(bsr.bsrValA),sizeof(T)*bsr.nnzb,"bsrValC alloc");
+		cutil::safeMallocHost<Z,uint64_t>(&(bsr.bsrColIndA),sizeof(Z)*bsr.nnzb,"bsrColIndA alloc");
+		cutil::safeMallocHost<T,uint64_t>(&(bsr.bsrValA),sizeof(T)*(bsr.blockDim*bsr.blockDim)*bsr.nnzb,"bsrValA alloc");
 	#endif
 
 	std::cout << "Converting data to bsr ..." << std::endl;
@@ -487,8 +513,8 @@ void BenchSPMV<Z,T>::power_method()
 	//Allocation and Random Initialization//
 	coo_to_csr();
 #ifndef UNIFIED_MEMORY
- 	cutil::safeMalloc<T,uint64_t>(&(dx),sizeof(T)*coo.m,"dx values alloc");
-	cutil::safeMalloc<T,uint64_t>(&(dy),sizeof(T)*coo.m,"dy values alloc");
+ 	cutil::safeMalloc<T,uint64_t>(&(dx),sizeof(T)*csr.m,"dx values alloc");
+	cutil::safeMalloc<T,uint64_t>(&(dy),sizeof(T)*csr.m,"dy values alloc");
 	cutil::safeMalloc<T,uint64_t>(&(csr.values),sizeof(T)*csr.nnz,"coo.values alloc");//TODO:Initialize to one
 	dim3 csr_init_block(256,1,1);
 	dim3 csr_init_grid((csr.nnz - 1)/256 + 1,1,1);
@@ -498,8 +524,10 @@ void BenchSPMV<Z,T>::power_method()
  	cutil::safeMallocHost<T,uint64_t>(&(dx),sizeof(T)*coo.m,"dx values alloc");
 	cutil::safeMallocHost<T,uint64_t>(&(dy),sizeof(T)*coo.m,"dy values alloc");
 	cutil::safeMallocHost<T,uint64_t>(&(csr.values),sizeof(T)*coo.nnz,"coo.values alloc");//TODO:
-	//for(uint32_t i = 0; i < csr.nnz; i++) csr.values[i] = 1.0f;
 #endif
+	free_coo();
+	var_mem = sizeof(T)*csr.m + sizeof(T)*csr.m;
+	if(DEBUG_SPMV) std::cout << "VAR_MEM: " << var_mem /(1024*1024) << " MB" << std::endl;
 
 	cutil::cudaInitRandStates();
 	cutil::cudaRandInit<T,uint64_t>(dx,csr.m);
@@ -508,7 +536,7 @@ void BenchSPMV<Z,T>::power_method()
     cusparseSetMatIndexBase(cusparse_descrA,CUSPARSE_INDEX_BASE_ZERO);
     cusparseSetMatType(cusparse_descrA, CUSPARSE_MATRIX_TYPE_GENERAL );
 
-	for(uint32_t i = 0; i < 3; i++)
+	for(uint32_t i = 1; i < 3; i++)
 	{
 		int format = formats[i];
 
@@ -594,7 +622,8 @@ void BenchSPMV<Z,T>::power_method()
 			cublas_util::handle_error(cublas_status,"calculate lambda = y**T*x");
 			this->tt_lambda += tt.lap();
 		}
-		this->benchmark();
+		this->benchmark(i);
+		if(i == 1) free_bsr();
 		this->clear_timers();
 	}
 
@@ -607,60 +636,6 @@ void BenchSPMV<Z,T>::power_method()
 #endif
 	cusparse_status = cusparseDestroyMatDescr(cusparse_descrA);
 	cusp_util::handle_error(cusparse_status,"destroy matrix descrA");
-
-	return ;
-
-//	//Initialize vector
-//	T *x = (T*)malloc(sizeof(T)*csr.m);
-//	for(uint64_t i = 0; i < csr.m; i++) x[i] = 0.5;
-//	cutil::safeCopyToDevice<T,uint64_t>(dx, x,sizeof(T)*csr.m, "x copy to dx");
-//	free(x);
-//
-//	//////////////////////////
-//	//Set Matrix Descriptors//
-//	cusparse_status = cusparseCreateMatDescr(&cusparse_descrA);
-//	cusp_util::handle_error(cusparse_status,"create matrix descrA");
-//    cusparseSetMatIndexBase(cusparse_descrA,CUSPARSE_INDEX_BASE_ZERO);
-//    cusparseSetMatType(cusparse_descrA, CUSPARSE_MATRIX_TYPE_GENERAL );
-//
-//    std::cout << "Executing Pagerank ..." <<std::endl;
-//	if( std::is_same<T,double>::value )
-//	{
-//		//euclidean norm of dx
-//		std::cout << "calculate normalize value ..." << std::endl;
-//		cublas_status = cublasDnrm2_v2(cublas_handle, csr.m, dx, 1, &nrm2_x );
-//		cublas_util::handle_error(cublas_status,"calculate normalize value");
-//
-//		//normalize dx
-//		std::cout << "normalize vector ..." << std::endl;
-//		T one_over_nrm2_x = 1.0 / nrm2_x;
-//		cublas_status = cublasDscal_v2(cublas_handle, csr.m, &one_over_nrm2_x, dx, 1 );
-//		cublas_util::handle_error(cublas_status,"normalize vector");
-//
-//		std::cout << "y = A*x" << std::endl;
-//		cusparse_status = cusparseDcsrmv_mp(cusparse_handle,
-//                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
-//                                         csr.m,
-//										 csr.m,
-//                                         csr.nnz,
-//                                         &h_one,
-//										 cusparse_descrA,
-//                                         csr.values,
-//                                         csr.row_idx,
-//                                         csr.col_idx,
-//                                         dx,
-//                                         &h_zero,
-//                                         dy);
-//		cusp_util::handle_error(cusparse_status,"csr_spmv execution");
-//
-//		std::cout << "lambda = y**T*x" << std::endl;
-//		cublas_status = cublasDdot_v2 (cublas_handle, csr.m, dx, 1, dy, 1, &lambda_next);
-//		cublas_util::handle_error(cublas_status,"calculate lambda = y**T*x");
-
-//	}
-//
-
-//	destroy_csr<Z,T>(csr);
 }
 
 #endif
