@@ -183,7 +183,10 @@ namespace cutil{
 	 *
 	 */
 	__host__ void cudaCheckErr(cudaError_t error, std::string comment){
-		if (error != cudaSuccess){ std::cout << "Cuda Error: " << comment << "," << cudaGetErrorString(error) << std::endl; exit(1); }
+		if (error != cudaSuccess){
+			std::cout << "Cuda Error: " << comment << "," << cudaGetErrorString(error) << std::endl;
+			//exit(1);
+		}
 	}
 
 	__host__ void setActiveDevice(int devID){

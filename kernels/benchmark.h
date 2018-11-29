@@ -14,7 +14,7 @@
 #define HYB 2
 #define ELL 3
 
-#define ITER 100
+#define ITER 1
 
 static std::string format_names[] ={
 		"CSR",
@@ -115,6 +115,7 @@ class BenchSPMV{
 		double tt_norm;
 		double tt_spmv;
 		double tt_lambda;
+		double tt_copy;
 		Time<millis> tt;
 
 		double csr_mem;
@@ -128,6 +129,7 @@ template<class Z, class T>
 void BenchSPMV<Z,T>::benchmark(int i)
 {
 	double tt_pmethod = this->tt_norm_val + this->tt_norm + this->tt_spmv + this->tt_lambda;
+	this->tt_spmv += this->tt_copy;
 	std::cout << std::fixed << std::setprecision(4);
 	std::cout << "<<<<<<<<<< -----------BENCHMARK("<<format_names[i] << ")----------- >>>>>>>>>>" << std::endl;
 	std::cout << "Op(msec)\t:\tTotal(msec)\t:\tIter<x " << ITER << "> (msec)" << std::endl;
@@ -136,6 +138,7 @@ void BenchSPMV<Z,T>::benchmark(int i)
 	std::cout << "spmv     \t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_spmv << "\t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_spmv/ITER << std::endl;
 	std::cout << "tt_lambda \t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_lambda << "\t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_lambda/ITER << std::endl;
 	std::cout << "power method \t:\t" << std::setfill('0') << std::setw(7+5) << tt_pmethod << "\t:\t" << std::setfill('0') << std::setw(7+5) << tt_pmethod/ITER << std::endl;
+	if(!UNIFIED_MEMORY) std::cout << "copy         \t:\t" << std::setfill('0') << std::setw(7+5) << this->tt_copy << "\t:\t" << std::setfill('0') << std::setw(7+5) << 0 << std::endl;
 	std::cout << "<<<<<<<<<< ------------------------------- >>>>>>>>>>" << std::endl;
 }
 
@@ -414,7 +417,9 @@ void BenchSPMV<Z,T>::coo_to_csr()
 #if !UNIFIED_MEMORY
 	//cudaFree(coo_row_idx);
 	cutil::safeMalloc<Z,uint64_t>(&(csr.col_idx),sizeof(Z)*coo.nnz,"csr col indices alloc");
+	this->tt.start();
 	cutil::safeCopyToDevice<Z,uint64_t>(csr.col_idx, coo.col_idx,sizeof(Z)*coo.nnz, "csr copy to csr.col_idx");
+	this->tt_copy = this->tt.lap();
 #else
 	cutil::safeMallocHost<Z,uint64_t>(&(csr.col_idx),sizeof(Z)*coo.nnz,"csr col indices alloc");
 	memcpy(csr.col_idx, coo.col_idx,sizeof(Z)*coo.nnz);
@@ -500,6 +505,7 @@ void BenchSPMV<Z,T>::csr_to_hyb()
 	            CUSPARSE_HYB_PARTITION_AUTO);//partitionType: CUSPARSE_HYB_PARTITION_AUTO, CUSPARSE_HYB_PARTITION_USER, CUSPARSE_HYB_PARTITION_MAX
 
 	cusp_util::handle_error(cusparse_status,"csr to hyb");
+	std::cout << "hybA: " << sizeof(hybA) << std::endl;
 }
 
 template<class Z, class T>
@@ -525,6 +531,7 @@ void BenchSPMV<Z,T>::power_method()
  	cutil::safeMallocHost<T,uint64_t>(&(dx),sizeof(T)*coo.m,"dx values alloc");
 	cutil::safeMallocHost<T,uint64_t>(&(dy),sizeof(T)*coo.m,"dy values alloc");
 	cutil::safeMallocHost<T,uint64_t>(&(csr.values),sizeof(T)*coo.nnz,"coo.values alloc");//TODO:
+	for(uint64_t i = 0; i < csr.nnz; i++){ csr.values[i] = 1.0f; }
 #endif
 	free_coo();
 	var_mem = sizeof(T)*csr.m + sizeof(T)*csr.m;
@@ -536,7 +543,9 @@ void BenchSPMV<Z,T>::power_method()
     cusparseSetMatIndexBase(cusparse_descrA,CUSPARSE_INDEX_BASE_ZERO);
     cusparseSetMatType(cusparse_descrA, CUSPARSE_MATRIX_TYPE_GENERAL );
 
-	for(uint32_t i = 0; i < 3; i++)
+    do{ std::cout << '\n' << "Press Any Key to Continue..."; } while (std::cin.get() != '\n');
+
+	for(uint32_t i = 2; i < 3; i++)
 	{
 		int format = formats[i];
 
@@ -614,6 +623,7 @@ void BenchSPMV<Z,T>::power_method()
 				default:
 					std::cout << "FORMAT <" << format_names[format] << "> NOT SUPPORTED!!!" << std::endl;
 			}
+			cusp_util::handle_error(cusparse_status,"spmv");
 			this->tt_spmv += tt.lap();
 
 			this->tt.start();
